@@ -1,0 +1,51 @@
+# ---- CMake / ビルド成果物 ----
+build/
+bin/
+# サブディレクトリで in-source build してしまった場合の保険
+**/CMakeFiles/
+**/CMakeCache.txt
+**/cmake_install.cmake
+**/Makefile
+compile_commands.json
+
+# ---- オブジェクト・ライブラリ ----
+*.o
+*.o.d
+*.a
+*.so
+*.so.*
+
+# ---- 実行時に出るもの ----
+*.log
+core
+core.*
+
+# ---- 記録データ（走行ログ・rosbag）----
+log/
+*.bag
+*.db3
+
+# ---- エディタ・OS ----
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+.DS_Store
+
+# ---- Python（可視化スクリプト用）----
+**/__pycache__/
+*.pyc
+
+# ---- 学習済みモデル（YOLO 等を使う場合。GitHub の 100MB 制限対策）----
+*.pt
+*.pth
+*.onnx
+*.engine
+*.weights
+
+# ---- 点群地図 ----
+# maps/*.pcd は現状 1MB 以下なので追跡している。
+# 高解像度の地図を追加して 100MB を超えそうになったら、
+# 下行を有効にして Git LFS か別管理へ移すこと。
+#maps/*.pcd
