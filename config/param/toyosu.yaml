@@ -1,29 +1,34 @@
 # 豊洲チャレンジ パラメータ
 # 単位は SI 統一 ( m, rad, s )。配列は [ x, y, yaw ] の順
 
+# 読み手: ndt
 robot:
-  width:                     # [m] 車体幅
-  length:                    # [m] 車体長
-  lidar_offset: [0 , 0, 0]   # [m, m, rad] 車輪中心から見た LiDAR の取り付け位置
+  width:  0.50                                   # [m] 車体幅 ( 暫定・未測定 )
+  length: 0.70                                   # [m] 車体長 ( 暫定・未測定 )
+  lidar_offset: [ 0.20, 0.0, 0.0 ]               # [m, m, rad] 車輪中心から見た LiDAR の取り付け位置 ( 暫定・未測定 )
 
+# 読み手: ndt, odom_conv
 course:
-  map_path:                  # 地図 PCD へのパス
-  start_pose: [ 0, 0, 0]     #図座標
-  wp_path:                   #パス
+  map_path: ../maps/toyosu_11f_map_all_2D.pcd    # 地図 PCD へのパス ( ファイル名は要確認 )
+  start_pose: [ 0.0, 0.0, 0.0 ]                  # [m, m, rad] Start 地点の地図座標 ( 暫定・未確定 )
+  wp_path: ../maps/toyosu_11f.wp                 # ウェイポイントファイルへのパス ( 仮・第一段階では未使用 )
 
+# 読み手: urg_handler
 urg:
-  device:                    # UST-20LX の IP アドレス
-  port:                      # TCP ポート番号
-  range_min:                 # [m] これより近い点は捨てる
-  range_max:
+  device: 192.168.9.19                           # UST-20LX の IP アドレス
+  port: 10940                                    # TCP ポート番号
+  range_min: 0.06                                # [m] これより近い点は捨てる
+  range_max: 20.0                                # [m] これより遠い点は捨てる
 
+# 読み手: ndt
 ndt:
-  resolution:
-  step_size:                 # 最適化の最大ステップ長
-  trans_epsilon:             # 収束判定のしきい値
-  max_iteration:
-  scan_leaf_size:            # [m] 入力スキャンの間引き幅
+  resolution: 0.5                                # [m] ボクセルの一辺 ( 実機で調整 )
+  step_size: 0.1                                 # 最適化の最大ステップ長 ( 実機で調整 )
+  trans_epsilon: 0.01                            # 収束判定のしきい値 ( 実機で調整 )
+  max_iteration: 30                              # 最大反復回数 ( 実機で調整 )
+  scan_leaf_size: 0.05                           # [m] 入力スキャンの間引き幅 ( 実機で調整 )
 
+# 読み手: localizer
 fusion:
-  alpha: [ 0.5, 0.5, 0]      # [x, y, yaw] 相補フィルタの融合率 ( 0.0 - 1.0 )
-  score_threshold:
+  alpha: [ 0.5, 0.5, 0.3 ]                       # [x, y, yaw] 相補フィルタの融合率 ( 0.0 - 1.0 )
+  score_threshold: 2.0                           # NDT スコアの採用しきい値 ( 第一段階では未使用 )

@@ -272,9 +272,34 @@ yaml-cpp に依存するのは config だけ。他プロセスは config.hpp を
 - `getProperty()` は起動時1回きり。パラメータを変更したらそのプロセスを再起動する。
 - config は config ストリームのみを create する。他プロセスのストリームには触らない。
 
-### config が常駐しなければならない理由
-SSM は `release()` を呼ぶとストリームの実体が消える。config が終了すると全プロセスが
-`getProperty()` に失敗するため、「property を設定して終了」はできない。
+### config は常駐しない（2026-09-16 訂正）
+
+> 当初「config は常駐しなければならない」と記録していたが、**前提が誤っていたため撤回する。**
+
+誤っていた記述: 「SSM は `release()` を呼ぶとストリームの実体が消える」。
+実際には `releaseSSM()` は何も破棄していない（`~/dssm/src/libssm.c:403`）。
+
+```c
+int releaseSSM( SSM_sid *sid )
+{
+    // TODO:破棄できるようにする
+    if( *sid ){
+        //shmdt( *sid );      ← コメントアウトされている
+        *sid = 0;
+    }
+    return 1;
+}
+```
+
+`/usr/local/include/ssm.h:120` にも「現状として、実際にSSMからストリームを破棄できるわけでは
+なく、ストリームから切断するだけである」と明記されている。ストリームの実体は
+**ssm-coordinator が管理する共有メモリ**にあり、coordinator が生きている限り property も残る。
+
+したがって TC2025 どおり「property を設定して write し、終了する」でよい。実際 TC2025 の
+config も `while( !gShutOff ){ gShutOff = 1; ... }` と1周で抜けて終了する。
+
+なお、この `while` の形はそのまま踏襲する。常駐させたくなったとき `gShutOff = 1;` の
+1行を消すだけで切り替えられるため。
 
 ### サブ構造体の分割基準
 **「どのプロセスが読むか」と1対1で対応させる。** 各構造体の直前に読み手プロセス名を
@@ -330,11 +355,42 @@ ROS2 の `declare_parameter(name, default_value)` と同じ役割。YAML にキ�
   `printParam()` の目視確認で代替。
 
 ### 実測値（すべて暫定値）
-- `lidar_offset`: 車輪中心から LiDAR までの距離が未測定
-- `start_pose`: Start地点の地図座標が未確定
-- 車体寸法: 未測定
+
+`toyosu.yaml` には暫定値を記入済み。実測でき次第、差し替えること。
+
+| キー | 現在の値 | 状況 |
+|---|---|---|
+| `robot.width` | 0.50 | **未測定** |
+| `robot.length` | 0.70 | **未測定** |
+| `robot.lidar_offset` | [ 0.20, 0.0, 0.0 ] | **未測定**（車輪中心から LiDAR まで） |
+| `course.start_pose` | [ 0.0, 0.0, 0.0 ] | **未確定**（Start 地点の地図座標） |
+| `course.map_path` | ../maps/toyosu_11f_map_all_2D.pcd | **ファイル名要確認**（下記参照） |
+| `course.wp_path` | ../maps/toyosu_11f.wp | **仮**。実体が存在しない。第一段階では未使用 |
+| `ndt.*` | resolution 0.5 ほか | **実機で調整** |
+| `fusion.*` | alpha [ 0.5, 0.5, 0.3 ] ほか | **実機で調整** |
+
+`urg.device` = 192.168.9.19、`urg.port` = 10940、`range_min` = 0.06、`range_max` = 20.0 は
+UST-20LX の仕様・既知の設定に基づく確定値。
+
+パスの基準（どのディレクトリから見た相対パスか）は未決。現在は `bin/` から実行する前提で
+書いている。`map_path` を実際に開くのは ndt なので、ndt 実装時に決める。
+
+### 実行方法（2026-09-16）
+```bash
+cd bin
+./config -p ../config/param/toyosu.yaml
+```
+`-p` は必須。`ssm-coordinator` が起動していること。
 
 ### utility の API
+- `setSigInt()` / `ctrlC()` を utility へ共通化するか: **urg_handler 実装時に判断する。**
+  TC2025 では 39 ファイルに重複し、`signal( SIGINT, NULL )` のバグが 38 箇所にコピペされている
+  （共通化の強い動機）。一方で `gShutOff` は ctrlC 専用ではなく通常コードからも 41 箇所で
+  代入されているため、`extern` で公開すると §3 の隠蔽方針に反する。
+  回避案は `void setSigInt( int *shutOff );` としてポインタを預ける形。呼び出し側は
+  `static int gShutOff` を持ったまま `setSigInt( &gShutOff )` と呼ぶ。
+  ただし利用者がまだ config 1つしかなく、urg_handler では受信ブロック中の `EINTR` 処理など
+  config に無い要求が出る見込みのため、2人目を見てから決める。
 - `openWithRetry()`: **今回は実装しない。** 仕様書 §4 は要件に挙げているが、§9「utility.hpp は
   添字定数と trans_q() のみ」が実装順として優先。config は他ストリームを読まないため利用者が
   いない。**最初の利用者は urg_handler**（config を getProperty() で読むため）なので、
@@ -342,6 +398,45 @@ ROS2 の `declare_parameter(name, default_value)` と同じ役割。YAML にキ�
 - `transformPose()` / `transformPoint()`: **今回は実装しない。** 引数の向き
   （offset を「変換先から見た変換元」とするか逆か）は、odom_conv で実際に使ってみないと
   決めきれないため。先に API を決めると手戻りになる。
+
+### config.cpp で確定した実装方針（2026-09-16）
+- config は **property を配信して終了する**（常駐しない）。理由は §7 を参照
+- `-p` / `--path` は **必須**。既定値を持たない（`gPath[ 256 ] = ""` + `setOption()` で空判定）。
+  相対パスの既定値は CWD 依存で壊れやすく、「気づかないうちに既定値が使われる」のを避けるため。
+  ヘルプ本文に例としてパスを書くのは可（値として使われないので無害）
+- `loadParam()` は `SSMApi` の `property` メンバへ**直接**読み込む（`loadParam( gPath, &conf.property )`）。
+  中間コピーを置くと「代入し忘れたのに print は正しく出る」バグの余地ができるため
+- `loadParam()` は `initSSM()` より**前**に呼ぶ。YAML が読めないのにストリームだけ作ると、
+  デフォルト値のまま「config は動いている」状態になり他プロセスが掴んでしまう
+- `printParam()` は `setProperty()` の**後**に呼ぶ。実際に SSM へ載せた実体を表示するため
+- 周期は TC2025 と同じ `static unsigned int dT = 100; // [ms]` + `create( 0.5, ( double )dT/1000.0 )`。
+  **§3 の「単位は SI 統一」に対する意図的な例外**。SSM に載らないファイル内ローカルな値であり、
+  §3 が防ぎたい「プロセス間の単位食い違い」には該当しないため。`// [ms]` のコメントは必須
+- `ctrlC()` の `signal( SIGINT, SIG_DFL )` は **TC2025 から変更**（TC2025 は `NULL`）。
+  `NULL` はハンドラのアドレスとしてヌルポインタを設定する意味になり、2回目の SIGINT で
+  segfault しうる。TC2025 では 38 箇所に同じ形がコピペされている
+- `release()` / `endSSM()` は try/catch の**外**に置く。`initSSM()` で失敗しても必ず通り、
+  `release()` は sid が 0 なら何もしないため create 前に呼んでも安全
+
+### `printParam()` の検証範囲（2026-09-16 実測）
+
+`printParam()` がキー名 typo を検出できるのは、**YAML の値が `setDefault()` の値と違うときだけ**。
+同じ値だとキー名を打ち間違えても表示が変わらず、区別がつかない。
+
+本番 `toyosu.yaml` で検証できたのは 17 キー中 8 キーのみだったため、
+**全キーを別値にした YAML を1度通して 17 キー全部が反映されることを確認済み**。
+`param.cpp` のキー名はすべて正しい。
+
+同種の確認は、`param.cpp` にキーを追加したときに再度行うこと。
+
+### yaml-cpp の挙動（2026-09-16 実測）
+- `Node::operator bool()` は `IsDefined()` を返す（`/usr/include/yaml-cpp/node/node.h:61`）。
+  つまり `if( n[ "key" ] )` は「**キーが存在するか**」であって「値が入っているか」ではない
+- キーはあるが値が空（`width:`）の場合、`.as< double >()` が `bad conversion` を投げ、
+  `loadParam()` が失敗する。→ **埋め忘れは必ず落ちる**（意図した挙動として利用する）
+- キーごと無い場合はデフォルト値が使われる（静かに進む）
+- **エラーの報告行は「値が空のキーの次のトークン」の位置**。`width:` が5行目で空なら
+  `error at line 6` と出る。エラーが出たら報告された行の**1つ上**を見ること
 
 ### その他
 - ストリーム名 `SNAME_CONFIG` = `"toyosu_config"` は仮。変更可。
@@ -352,6 +447,10 @@ ROS2 の `declare_parameter(name, default_value)` と同じ役割。YAML にキ�
   `include/` へ分割済みなので、必要になればそのまま書ける。
 - 地図ファイル名: リポジトリの実体は `maps/toyosu_11f_map_all_2D.pcd` だが、
   仕様書では `maps/toyosu_11f_map_all_20cm_2D.pcd` となっている。**要確認。**
+- 例外を catch した後も `return EXIT_SUCCESS` になっている（TC2025 のまま）。SSM の初期化に
+  失敗してもシェルからは成功に見えるため、起動スクリプトで `&&` を使うなら要変更。**未決。**
+- **C++標準が食い違っている。** ルート `CMakeLists.txt` は `CMAKE_CXX_STANDARD 17` だが、
+  §6 の表には 14 と記録されている。どちらが正か**要確認**（現状は 17 でビルドが通っている）。
 
 ---
 
@@ -360,13 +459,13 @@ ROS2 の `declare_parameter(name, default_value)` と同じ役割。YAML にキ�
 ```
 [x] CMakeLists.txt 3ファイル（空ファイル + 暫定 main でビルド確認）
 [x] utility/include/utility.hpp  添字定数 (_X/_Y/_YAW) と trans_q() の宣言のみ
-[ ] utility/src/utility.cpp
+[x] utility/src/utility.cpp     trans_q() の実装
 [x] config/include/config.hpp    型定義
 [x] config/src/param.hpp         公開インタフェース 2関数のみ
 [x] config/src/param.cpp         setDefault() → 各 loader → printParam()
-[ ] config/src/config.cpp        main
-[ ] config/param/toyosu.yaml
-[ ] ./bin/config を実行し、YAML の値が正しく print されることを確認
+[x] config/src/config.cpp        main
+[x] config/param/toyosu.yaml     暫定値で記入（実測待ちの項目あり。§8 参照）
+[x] ./bin/config を実行し、YAML の値が正しく print されることを確認（17キー全部を検証）
 ```
 
 この時点で基盤は完成。以降 urg_handler → odom_conv → ndt → localizer の順に実装する。
@@ -380,7 +479,7 @@ ROS2 の `declare_parameter(name, default_value)` と同じ役割。YAML にキ�
 | 提案 | 却下理由 |
 |---|---|
 | `-Wall -Wextra` を付ける | TC2025 に無い |
-| `gShutOff` を `volatile sig_atomic_t` にする | TC2025 は `bool`。config.cpp の実装時に改めて相談 |
+| `gShutOff` を `volatile sig_atomic_t` にする | TC2025 は `int`（`static int gShutOff = 0;`、20ファイル以上で統一）。※当初「TC2025 は `bool`」と記録していたが誤りだったため訂正。config は常駐せず `while` で待たないため、`int` のままで実害が無いと判断した |
 | `copyStr()` / `loadArray3()` ヘルパの追加 | TC2025 に無い。param.cpp の実装時に改めて相談 |
 | `openWithRetry()` の代わりに SSM 既存の `openWait()` を使う | 要件どおり自作する |
 | ルートの `find_package(PCL)` をコメントアウト | 使うモジュール側に置く形で解決済み |
