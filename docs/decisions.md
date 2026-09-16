@@ -50,6 +50,9 @@ TC2025 と異なる実装を提案する場合は、必ずその旨を明記し�
 | 4 | 単位を SI 統一 (m, rad, s) | TC2025 は mm/m 混在で事故のもとだった |
 | 5 | CMake を add_subdirectory 方式へ | TC2025 はルートと各モジュールの二重管理で、C++標準が食い違っていた |
 | 6 | ディレクトリを `include/` と `src/` に分割 | 公開ヘッダと内部ヘッダの境界を構造で表現するため。TC2025 は全モジュール `src/` のみ |
+| 7 | 構造体を `struct X { };` 形式で宣言 | TC2025 は `typedef struct { } X;`。C++ では冗長で、無名型ゆえの制約もあるため（詳細は §3） |
+| 8 | 型の命名を `xxx_param` / `config_data` に統一 | TC2025 は `Robot_info` / `LiDAR_info`、ダミー型は `config`。`config` はターゲット名・変数名と衝突しうるため避ける |
+| 9 | サブ構造体の分割を「読み手プロセス単位」にする | TC2025 はセンサ・機能単位で、融合率を `Control_info` に入れるなど使用者と無関係な切り方だった |
 
 ---
 
@@ -67,6 +70,10 @@ TC2025 と異なる実装を提案する場合は、必ずその旨を明記し�
   符号ミスは動作してしまい発見が遅れるため。
 
 ### 構造体
+- 宣言は **`struct X { ... };`** 形式にする（`typedef struct { ... } X;` は使わない）。
+  TC2025 は typedef 形式だが、C++ では冗長。加えて typedef 形式は構造体が無名になるため
+  前方宣言ができず、テンプレート引数に渡せるのも C++11 以降の規定に依存する
+  （`SSMApi< config_data, config_property >` が該当）。
 - `#pragma pack` は使わない（全ストリームで統一。DSSM による他機通信の予定がないため）。
 - 配列の添字は `_X` / `_Y` / `_YAW` の定数で参照する。
 - char 配列は必ず固定長にする。SSM は構造体を共有メモリにそのままコピーするため、
@@ -93,7 +100,41 @@ TC2025 と異なる実装を提案する場合は、必ずその旨を明記し�
 **迷ったら `src/` に置く。** 後から `include/` へ移す方が、公開してしまったものを
 引っ込めるより安全。
 
+### コメント規約（2026-09-16 決定）
+
+**説明コメントは原則1行まで。** 2行以上必要になったら、コメントを増やすのではなく
+関数名や構造を見直す合図とする。コメントが多いと可読性が落ちるため。
+
+| 場所 | 書き方 |
+|---|---|
+| ファイル先頭 | 1行で「このファイルが何を担当するか」 |
+| 関数の直前 | 自明でないものだけ1行。特に**引数の向き・単位・失敗時の戻り値** |
+| 構造体メンバ・定数 | 行末に単位を書く（TC2025 の config.hpp と同じ流儀） |
+| Doxygen タグ | **使わない** |
+| コメント記法 | **`//` を使う**（`/* */` は使わない）。TC2025 も `//` が主体（`//` 4527 箇所 : `/* */` 565 箇所） |
+
+判断基準は「関数名を読めば分かることは書かない。読んでも分からないことだけ書く」。
+TC2025 も Doxygen を使っていない（`@brief` は 0 ファイル）。SSM 本体は使っているが、
+そちらに合わせる必要はない。
+
 ### コードスタイル
+- **制御文には原則 `{ }` を付ける。ただし本文が `if` と同じ行に収まる場合は省略してよい**
+  （2026-09-16 決定。一度「例外なし」で決めたが、実際に両方を書き比べた結果、
+  単純代入まで 3 行に展開すると可読性が落ちすぎるため例外を認めた）。
+
+| 本文の置き方 | `{ }` |
+|---|---|
+| `if` と同じ行に収まる（単純代入など） | 省略してよい |
+| 改行する（複数行、`for` を含むなど） | **必須** |
+
+  - 波括弧が防ぐのは「本文を次の行に置き、後から 2 文目を足してインデントに騙される」形
+    （Apple の goto fail が実例）。同一行なら 2 文目を足す余地が無く、守るものがない。
+  - TC2025 にも同一行 if は計 411 箇所あり、うち 258 が `return`/`continue`/`break` などの
+    脱出ガード、153 が代入・関数呼び出し（例: `if( obp.pos.v < 0.3 ) obp.pos.v = 0.3;`）。
+    ※ 当初「代入を伴う同一行 if は無い」と記録していたが誤りだったため訂正済み。
+  - 波括弧では防げない類もある。TC2025 の `if( obp.pos.w < M_PI/4 ) obp.pos.v = M_PI/4;` は
+    w を見て v に代入しているバグと思われ、コピペして片方だけ直し忘れた形。こちらは
+    キー名とメンバ名の対応を上から確認する習慣で潰す。
 - `.cpp` 内部の補助関数はすべて `static` で隠蔽する。
 - `namespace` は使わない（SSM はプロセス分離されており、シンボル衝突の心配がない）。
 - 状態を持たない処理はクラスにせず、関数として実装する。
@@ -128,7 +169,7 @@ TC2025 と異なる実装を提案する場合は、必ずその旨を明記し�
 
 ```
 config        パラメータを SSM property で全プロセスに配信。常駐するだけ
-urg_handler   UST-20LX を読み、urg_fs を配信
+urg   UST-20LX を読み、urg_fs を配信
 odom_conv     spur_odometry を地図座標へ剛体変換し、odom_gl を配信
 ndt           urg_fs + estim_gl → PCL NDT2D でマッチング → ndt_gl を配信
 localizer     odom_gl + ndt_gl → 相補フィルタで融合 → estim_gl を配信
@@ -174,12 +215,13 @@ utility にも PCL のコンパイル定義が付く。TC2025 のルートがこ
 |---|---|---|
 | 出力先の指定 | `CMAKE_RUNTIME_OUTPUT_DIRECTORY` | TC2025 は旧仕様の `EXECUTABLE_OUTPUT_PATH`。現行仕様へ変更 |
 | 警告オプション (`-Wall` 等) | **入れない** | TC2025 に無いため |
-| C++標準 | ルートで `CMAKE_CXX_STANDARD 14` + `CMAKE_CXX_EXTENSIONS OFF` | `OFF` により `-std=c++14` が生成され、TC2025 の config と同じフラグになる |
+| C++標準 | ルートで `CMAKE_CXX_STANDARD 17` + `CMAKE_CXX_EXTENSIONS OFF` | `OFF` により `-std=c++14` が生成され、TC2025 の config と同じフラグになる |
 | ビルドタイプ | `if( NOT CMAKE_BUILD_TYPE )` で Release | TC2025 は無条件代入で Debug ビルド不可だった。**TC2025 に無い挙動**。戻す選択肢あり |
 | `message(STATUS ...)` のフラグ表示 | 省略 | TC2025 には有る。必要なら追加 |
 | ビルド確認の方法 | `config.cpp` に `int main(){ return 0; }` だけ先に書く | 空ファイルだと main が無くリンクエラーになるため |
 | `cmake_minimum_required` | `VERSION 3.17` | TC2025 は 3.15 |
 | ディレクトリ構成 | `include/` (公開ヘッダ) + `src/` (実装と内部ヘッダ) | TC2025 は `src/` のみ。詳細は §3 |
+| `utility` の外部依存 | **無し**（`target_link_libraries` の行を削除） | openWithRetry() を書かない間、utility は SSM を使わない。urg_handler 実装時に `PUBLIC ssm` を戻す |
 | `target_include_directories` | utility は `PUBLIC include`、config は `PRIVATE include` | config は `src/` から `include/` を参照するため 1 行必要。`param.hpp` は `config.cpp` と同じ `src/` なので指定不要 |
 
 ### ディレクトリ構成
@@ -260,6 +302,27 @@ ROS2 の `declare_parameter(name, default_value)` と同じ役割。YAML にキ�
   するか累積形 (`offset += α × diff`) にするか。**現時点では追加しない。**
 - `fusion_param.score_threshold`: 第一段階では未使用。定義だけ置く。
 
+### config.hpp で確定した値（2026-09-16）
+- `SNAME_CONFIG` = `"toyosu_config"`（仮ではなく確定）
+- `CONFIG_VER` = `"2026.09.16"`
+- 文字列長: `map_path[256]` / `wp_path[256]` / `device[64]` / `ver[64]`
+- `robot_param` の `width` / `length` は**入れる**（TC2025 の `Robot_info` にも実績あり。
+  第一段階では読まないが障害物検知で必要）
+- `fusion_param.score_threshold` は定義だけ置き、実装では使わない
+- TC2025 の `CONFIG_INFO` は入れない
+- `config.hpp` は何も include しない（`_STRLEN` を使わないため utility にも依存しない）
+
+### param.cpp で確定した実装方針（2026-09-16）
+- 文字列コピーは `snprintf( dst, sizeof( dst ), "%s", src )` の 1 行（`strncpy` は切り詰め時に
+  終端 NUL を付けないため使わない。TC2025 の `sprintf` は長さ制限が無いので使わない）
+- 3 要素配列はヘルパを作らず各 loader に `for` を直書き
+- `setDefault()` の冒頭で `memset` する（将来メンバを追加したときの保険。TC2025 には無い記述）
+- `printParam()` の書式は `ラベル : 値 [単位]`（TC2025 の「値 → # → 説明」形式は .cfg の並びに
+  対応させるためのもので、YAML では不要）
+- デフォルト値は本番値とわざと変える（例: `urg.device` は `192.168.0.10`、YAML は `192.168.9.19`）。
+  一致させるとキー名の typo に気づけなくなるため
+- `param.cpp` は `utility.hpp` を include する（`_X` / `_Y` / `_YAW` を使うため）
+
 ### パラメータファイル
 - 1ファイルか分割か: 現状 `toyosu.yaml` 1ファイル。
 - パスを相対で持つか絶対に展開するか: 未決。現時点では YAML の文字列をそのまま保持する。
@@ -272,6 +335,10 @@ ROS2 の `declare_parameter(name, default_value)` と同じ役割。YAML にキ�
 - 車体寸法: 未測定
 
 ### utility の API
+- `openWithRetry()`: **今回は実装しない。** 仕様書 §4 は要件に挙げているが、§9「utility.hpp は
+  添字定数と trans_q() のみ」が実装順として優先。config は他ストリームを読まないため利用者が
+  いない。**最初の利用者は urg_handler**（config を getProperty() で読むため）なので、
+  そのときに追加する。シグネチャの結論（`SSMApiBase&` で受けられる）は §4 に記録済み。
 - `transformPose()` / `transformPoint()`: **今回は実装しない。** 引数の向き
   （offset を「変換先から見た変換元」とするか逆か）は、odom_conv で実際に使ってみないと
   決めきれないため。先に API を決めると手戻りになる。
@@ -292,11 +359,11 @@ ROS2 の `declare_parameter(name, default_value)` と同じ役割。YAML にキ�
 
 ```
 [x] CMakeLists.txt 3ファイル（空ファイル + 暫定 main でビルド確認）
-[ ] utility/include/utility.hpp  添字定数と trans_q(), openWithRetry() の宣言のみ
+[x] utility/include/utility.hpp  添字定数 (_X/_Y/_YAW) と trans_q() の宣言のみ
 [ ] utility/src/utility.cpp
-[ ] config/include/config.hpp    型定義
-[ ] config/src/param.hpp         公開インタフェース 2関数のみ
-[ ] config/src/param.cpp         setDefault() → 各 loader → printParam()
+[x] config/include/config.hpp    型定義
+[x] config/src/param.hpp         公開インタフェース 2関数のみ
+[x] config/src/param.cpp         setDefault() → 各 loader → printParam()
 [ ] config/src/config.cpp        main
 [ ] config/param/toyosu.yaml
 [ ] ./bin/config を実行し、YAML の値が正しく print されることを確認
@@ -317,3 +384,7 @@ ROS2 の `declare_parameter(name, default_value)` と同じ役割。YAML にキ�
 | `copyStr()` / `loadArray3()` ヘルパの追加 | TC2025 に無い。param.cpp の実装時に改めて相談 |
 | `openWithRetry()` の代わりに SSM 既存の `openWait()` を使う | 要件どおり自作する |
 | ルートの `find_package(PCL)` をコメントアウト | 使うモジュール側に置く形で解決済み |
+| utility.hpp に openWithRetry() を今書く | 仕様書 §9 が優先。利用者が現れる urg_handler 実装時に追加 |
+| utility.hpp に TC2025 の `_STRLEN` / `_ROLL` / `_DEG2RAD()` 等を移植 | 第一段階で使わない。必要になった時点で移植する |
+| utility.hpp に TC2025 の `isValidFile()` / `Gprint()` / `kbhit()` 等を移植 | 同上 |
+| utility.hpp に `<cstdio>` / `<math.h>` を include | 宣言のみのファイルなので不要。`M_PI` を使う utility.cpp 側に置く |

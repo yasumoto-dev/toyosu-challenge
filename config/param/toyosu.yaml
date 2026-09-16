@@ -1,0 +1,29 @@
+# 豊洲チャレンジ パラメータ
+# 単位は SI 統一 ( m, rad, s )。配列は [ x, y, yaw ] の順
+
+robot:
+  width:                     # [m] 車体幅
+  length:                    # [m] 車体長
+  lidar_offset: [0 , 0, 0]   # [m, m, rad] 車輪中心から見た LiDAR の取り付け位置
+
+course:
+  map_path:                  # 地図 PCD へのパス
+  start_pose: [ 0, 0, 0]     #図座標
+  wp_path:                   #パス
+
+urg:
+  device:                    # UST-20LX の IP アドレス
+  port:                      # TCP ポート番号
+  range_min:                 # [m] これより近い点は捨てる
+  range_max:
+
+ndt:
+  resolution:
+  step_size:                 # 最適化の最大ステップ長
+  trans_epsilon:             # 収束判定のしきい値
+  max_iteration:
+  scan_leaf_size:            # [m] 入力スキャンの間引き幅
+
+fusion:
+  alpha: [ 0.5, 0.5, 0]      # [x, y, yaw] 相補フィルタの融合率 ( 0.0 - 1.0 )
+  score_threshold:
