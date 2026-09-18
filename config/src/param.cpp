@@ -1,4 +1,4 @@
-// パラメータの読み込み・デフォルト値・表示
+// yamlからパラメータの読み込み・デフォルト値・表示
 
 #include <cstdio>
 #include <cstring>

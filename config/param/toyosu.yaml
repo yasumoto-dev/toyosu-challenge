@@ -3,9 +3,9 @@
 
 # 読み手: ndt
 robot:
-  width:  0.50                                   # [m] 車体幅 ( 暫定・未測定 )
-  length: 0.70                                   # [m] 車体長 ( 暫定・未測定 )
-  lidar_offset: [ 0.20, 0.0, 0.0 ]               # [m, m, rad] 車輪中心から見た LiDAR の取り付け位置 ( 暫定・未測定 )
+  width:  0.38                                   # [m] 車体幅 ( 暫定・未測定 )
+  length: 0.46                                   # [m] 車体長 ( 暫定・未測定 )
+  lidar_offset: [ 0.07, 0.0, 0.0 ]               # [m, m, rad] 車輪中心から見た LiDAR の取り付け位置 ( 暫定・未測定 )
 
 # 読み手: ndt, odom_conv
 course:
