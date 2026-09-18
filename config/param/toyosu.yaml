@@ -7,17 +7,17 @@ robot:
   length: 0.46                                   # [m] 車体長 ( 暫定・未測定 )
   lidar_offset: [ 0.07, 0.0, 0.0 ]               # [m, m, rad] 車輪中心から見た LiDAR の取り付け位置 ( 暫定・未測定 )
 
-# 読み手: ndt, odom_conv
+# 読み手: ndt, odometry
 course:
-  map_path: ../maps/toyosu_11f_map_all_2D.pcd    # 地図 PCD へのパス ( ファイル名は要確認 )
+  map_path: ../../maps/toyosu_11f_map_all_2D.pcd    # 地図 PCD へのパス ( ファイル名は要確認 )
   start_pose: [ 0.0, 0.0, 0.0 ]                  # [m, m, rad] Start 地点の地図座標 ( 暫定・未確定 )
-  wp_path: ../maps/toyosu_11f.wp                 # ウェイポイントファイルへのパス ( 仮・第一段階では未使用 )
+  wp_path: ../../maps/toyosu_11f.wp                 # ウェイポイントファイルへのパス ( 仮・第一段階では未使用 )
 
 # 読み手: urg_handler
 urg:
-  device: 192.168.9.19                           # UST-20LX の IP アドレス
+  device: 192.168.0.10                           # UST-20LX の IP アドレス
   port: 10940                                    # TCP ポート番号
-  range_min: 0.06                                # [m] これより近い点は捨てる
+  range_min: 0.05                               # [m] これより近い点は捨てる
   range_max: 20.0                                # [m] これより遠い点は捨てる
 
 # 読み手: ndt

@@ -19,12 +19,12 @@ static void loadFusion( const YAML::Node &n, fusion_param *p );
 // デフォルト値の設定
 static void setDefault( config_property *conf )
 {
-  memset(conf, 0, sizeof(config_property));
+  memset( conf, 0, sizeof( config_property ) );
 
   snprintf( conf->ver, sizeof( conf->ver ), "%s", CONFIG_VER );
 
-  conf->robot.width  = 0.45;
-  conf->robot.length = 0.60;
+  conf->robot.width  = 0.40;
+  conf->robot.length = 0.50;
   conf->robot.lidar_offset[ _X ]   = 0.0;
   conf->robot.lidar_offset[ _Y ]   = 0.0;
   conf->robot.lidar_offset[ _YAW ] = 0.0;
@@ -43,7 +43,7 @@ static void setDefault( config_property *conf )
   conf->ndt.resolution     = 0.1;
   conf->ndt.step_size      = 0.1;
   conf->ndt.trans_epsilon  = 0.01;
-  conf->ndt.max_iteration      = 30;
+  conf->ndt.max_iteration  = 30;
   conf->ndt.scan_leaf_size = 0.05;
 
   conf->fusion.alpha[ _X ]       = 0.5;
