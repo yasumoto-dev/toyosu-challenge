@@ -14,3 +14,5 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin)
 # サブディレクトリは以下に追加
 add_subdirectory(utility)
 add_subdirectory(config)
+add_subdirectory(odometry)
+

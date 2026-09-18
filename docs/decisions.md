@@ -1,6 +1,6 @@
 # 豊洲チャレンジ 設計・作業の取り決め
 
-最終更新: 2026-09-16
+最終更新: 2026-09-18
 
 このドキュメントは、実装を進めるうえで合意した方針・決定事項・未決事項を記録する。
 新しい決定が出たら、その都度ここに追記する。
@@ -53,6 +53,8 @@ TC2025 と異なる実装を提案する場合は、必ずその旨を明記し�
 | 7 | 構造体を `struct X { };` 形式で宣言 | TC2025 は `typedef struct { } X;`。C++ では冗長で、無名型ゆえの制約もあるため（詳細は §3） |
 | 8 | 型の命名を `xxx_param` / `config_data` に統一 | TC2025 は `Robot_info` / `LiDAR_info`、ダミー型は `config`。`config` はターゲット名・変数名と衝突しうるため避ける |
 | 9 | サブ構造体の分割を「読み手プロセス単位」にする | TC2025 はセンサ・機能単位で、融合率を `Control_info` に入れるなど使用者と無関係な切り方だった |
+| 10 | `setupSSM()` の失敗時に必ず `throw` する | TC2025 の odm は `create` 失敗時に `std::runtime_error( ... )` を作るだけで `throw` が抜けている（odm_global / odm_adjust の2箇所） |
+| 11 | 起動時の待ちループに `gShutOff` 条件を追加 | TC2025 の `NDTransform.cpp:54` は `while( !localizer.readLast( ) )` で、供給元が落ちていると Ctrl-C で抜けられない |
 
 ---
 
@@ -160,9 +162,20 @@ TC2025 も Doxygen を使っていない（`@brief` は 0 ファイル）。SSM 
 - `SSMApi` のコンストラクタが `setBuffer( &data, sizeof(T), &property, sizeof(P) )` を
   呼ぶため、`SSMApiBase&` に落とした後もバッファサイズ情報は保持される。
   → **`openWithRetry()` は `SSMApiBase&` で受けられる**（テンプレート関数にする必要がない）。
-- SSM には `openWait( timeOut, openMode )` という類似機能が既にある（1秒間隔固定）。
-  今回は「何回目か表示したい」という要件があるため `openWithRetry()` を自作する。
 
+### read 系 API の実測（2026-09-18・odometry 実装時）
+
+- `readLast()` は `read( -1 )`、`readNew()` は `isUpdate( ) ? read( -1 ) : false`
+  （`ssm.hpp:432`, `ssm.hpp:443`）。**起動直後は `timeId` が未設定で `isUpdate()` が true に
+  なるため、初回はどちらも同じデータを返す。** 差が出るのは2回目以降。
+  使い分けは意味で決める — `readLast()` は「今の値を基準として焼き付ける」、
+  `readNew()` は「新着を検出する」。
+- `setBlocking( true )` を設定すると `readNew()` / `readNext()` が新着までブロックし、
+  `usleepSSM()` によるポーリングが不要になる（`waitTID()` が呼ばれる）。
+  ただしヘッダに「ブロッキングは使用が変更される可能性があるので、使用は上級者向け」と
+  明記されており、**TC2025 での使用は 0 件**。→ **使わない**（§10 参照）。
+- `usleepSSM()` は `/usr/local/include/ssm-time.h:57`。TC2025 で 31 箇所使用。
+  ただし `odm/src/calcOdometry.cpp` だけは素の `usleep()` を使っており、TC2025 内で不統一。
 ---
 
 ## 5. システム構成（第一段階: 自己位置推定のみ）
@@ -170,7 +183,7 @@ TC2025 も Doxygen を使っていない（`@brief` は 0 ファイル）。SSM 
 ```
 config        パラメータを SSM property で全プロセスに配信。常駐するだけ
 urg   UST-20LX を読み、urg_fs を配信
-odom_conv     spur_odometry を地図座標へ剛体変換し、odom_gl を配信
+odometry     spur_odometry を地図座標へ剛体変換し、odom_gl を配信
 ndt           urg_fs + estim_gl → PCL NDT2D でマッチング → ndt_gl を配信
 localizer     odom_gl + ndt_gl → 相補フィルタで融合 → estim_gl を配信
 ```
@@ -372,6 +385,10 @@ ROS2 の `declare_parameter(name, default_value)` と同じ役割。YAML にキ�
 `urg.device` = 192.168.9.19、`urg.port` = 10940、`range_min` = 0.06、`range_max` = 20.0 は
 UST-20LX の仕様・既知の設定に基づく確定値。
 
+> **`course.start_pose` は odometry が起動時に基準として読む（2026-09-18 以降）。**
+> ここが未確定のままだと、`odom_gl` の軌跡全体が平行移動 + 回転してずれる。
+> エラーは出ないので、実機確認の前に必ず実測値を入れること。詳細は §11。
+
 パスの基準（どのディレクトリから見た相対パスか）は未決。現在は `bin/` から実行する前提で
 書いている。`map_path` を実際に開くのは ndt なので、ndt 実装時に決める。
 
@@ -395,9 +412,16 @@ cd bin
   添字定数と trans_q() のみ」が実装順として優先。config は他ストリームを読まないため利用者が
   いない。**最初の利用者は urg_handler**（config を getProperty() で読むため）なので、
   そのときに追加する。シグネチャの結論（`SSMApiBase&` で受けられる）は §4 に記録済み。
-- `transformPose()` / `transformPoint()`: **今回は実装しない。** 引数の向き
-  （offset を「変換先から見た変換元」とするか逆か）は、odom_conv で実際に使ってみないと
-  決めきれないため。先に API を決めると手戻りになる。
+- `transformPose()` / `transformPoint()`: **utility には実装しない**（2026-09-18 決定）。
+  odometry の剛体変換は `odom_converter.cpp` の `static` 関数として直接書いた。
+  理由: この変換は「YP-Spur 座標系 → 地図座標系」の逆変換であり、汎用の
+  `transformPose( src, offset, dst )` に合わせると offset の逆算が必要になる。
+  ndt の点変換（LiDAR → 車輪中心）は純粋な順方向なので、**2つ目の用例が出てから
+  API を決める**。後で移せるよう `initTransform()` / `transformToMap()` の2関数に
+  まとめてある。
+  なお `utility/include/tf_pose.hpp` と `utility/src/tf_pose.cpp` は空ファイルとして
+  残っているが、ビルド対象ではなく意味は持たない（`transform.*` からの改名に
+  特段の理由は無し）。
 
 ### config.cpp で確定した実装方針（2026-09-16）
 - config は **property を配信して終了する**（常駐しない）。理由は §7 を参照
@@ -441,10 +465,14 @@ cd bin
 ### その他
 - ストリーム名 `SNAME_CONFIG` = `"toyosu_config"` は仮。変更可。
 - config の `create()` 引数（保存秒数・周期）: data を使わないため実質任意。
-- `config.hpp` を他プロセスへ渡す方法: `add_library(toyosu_config INTERFACE)` +
-  `target_include_directories(... INTERFACE include)` でヘッダオンリーライブラリに
-  する案があるが、採用するかは未決。判断は urg_handler の実装時。
-  `include/` へ分割済みなので、必要になればそのまま書ける。
+- `config.hpp` を他プロセスへ渡す方法: **当面は相対パス参照**（2026-09-18 決定）。
+  odometry では `target_include_directories( odometry PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/../config/include )` と書いた。
+  `add_library(toyosu_config INTERFACE)` によるヘッダオンリーライブラリ化は
+  TC2025 に無い抽象化であり、利用者が odometry で2人目にすぎないため保留。
+  **urg_handler / ndt / localizer が揃って4〜5人になった時点でまとめて切り替える**
+  （都度切り替えると「どちらの方式だったか」を毎回思い出すコストが出る）。
+  `${CMAKE_CURRENT_SOURCE_DIR}/` を必ず前置し、相対パスの基準を明示すること。
 - 地図ファイル名: リポジトリの実体は `maps/toyosu_11f_map_all_2D.pcd` だが、
   仕様書では `maps/toyosu_11f_map_all_20cm_2D.pcd` となっている。**要確認。**
 - 例外を catch した後も `return EXIT_SUCCESS` になっている（TC2025 のまま）。SSM の初期化に
@@ -466,9 +494,18 @@ cd bin
 [x] config/src/config.cpp        main
 [x] config/param/toyosu.yaml     暫定値で記入（実測待ちの項目あり。§8 参照）
 [x] ./bin/config を実行し、YAML の値が正しく print されることを確認（17キー全部を検証）
+
+[x] odometry/include/odom_gl.hpp       型定義（SNAME_ODOM と odom_gl のみ）
+[x] odometry/src/odom_converter.cpp    main。詳細は §11
+[x] odometry/CMakeLists.txt            ターゲット名は odometry（実行ファイルは bin/odometry）
+[x] ビルド確認（bin/odometry が生成されること）
+[ ] odometry の実機確認（§11 の「動作確認の観点」）
 ```
 
-この時点で基盤は完成。以降 urg_handler → odom_conv → ndt → localizer の順に実装する。
+config と odometry で基盤は完成。以降 urg_handler → ndt → localizer の順に実装する。
+
+`setOption()` → `setupSSM()` → `setSigInt()` → 初期化 → `readNew()` ループ → `Terminate()`
+という main の骨格は4プロセス共通。残り3つはこの型を流用する。
 
 ---
 
@@ -487,3 +524,179 @@ cd bin
 | utility.hpp に TC2025 の `_STRLEN` / `_ROLL` / `_DEG2RAD()` 等を移植 | 第一段階で使わない。必要になった時点で移植する |
 | utility.hpp に TC2025 の `isValidFile()` / `Gprint()` / `kbhit()` 等を移植 | 同上 |
 | utility.hpp に `<cstdio>` / `<math.h>` を include | 宣言のみのファイルなので不要。`M_PI` を使う utility.cpp 側に置く |
+| `setBlocking( true )` で `readNew()` をブロッキングさせ `usleepSSM()` を無くす | ヘッダに「仕様が変更される可能性があるので、使用は上級者向け」と明記。TC2025 での使用は 0 件（§4 参照） |
+| spur_odometry をコールバックで受け取る | SSM にコールバック機構は無い。最も近いのが上記 `setBlocking()` |
+| odometry の SSM 初期化を `setupSSM()` にせず main にベタ書きする | 一度決めかけたが、`SSMApi< config_data, config_property >` 等の宣言が長く main が読みにくくなったため撤回し、TC2025 と同じ `setupSSM()` / `Terminate()` の分割に戻した |
+| odometry に `ypspur` をリンクする | `<ssmtype/spur-odometry.h>` は `typedef` と `#define` のみで関数宣言を含まない。YP-Spur の API を呼ばないため不要。TC2025 の calcOdometry も `m ssm` のみ（`ypspur` を付けているのは `YPSpur_init()` を呼ぶ localizer / navigate / detectObstacle） |
+| odometry の `setOption()` / `printShortHelp()` を省略する | オプションが `-h` だけでも残す。無いと `argv` を一切見ないため、`--dt 10` のような未知の引数が黙殺され、既定値のまま静かに起動してしまう |
+| odometry の剛体変換を utility に切り出す | 逆変換であり、順方向の用例（ndt の点変換）が出てから API を決める（§8 参照） |
+
+---
+
+## 11. odometry の設計（2026-09-18）
+
+### 役割
+`spur_odometry`（YP-Spur 座標系）を読み、地図座標系の姿勢に剛体変換して `odom_gl` を配信する。
+それだけ。WP ファイルは読まない（初期位置は config から取る）。YP-Spur へのコマンド送信もしない。
+
+オドメトリそのものの計算は ypspur-coordinator の仕事であり、約 200Hz で `spur_odometry` を供給する。
+TC2025 の `calcOdom` クラス（`odm/src/odm.hpp`）はジャイロオドメトリの計算・IMU 融合・
+`spur_adjust` による外部補正の受け付けが本体で、**今回は参考にならない**。
+参考にしたのは `odm/src/calcOdometry.cpp` の main の骨格のみ。
+
+### ストリームと型の確認結果（`/usr/local/include/ssmtype/spur-odometry.h`）
+
+```c
+#define SNAME_ODOMETRY "spur_odometry"            // ストリーム名（小文字）
+typedef struct { double x, y, theta, v, w; } Spur_Odometry;   // 型名（大文字始まり）
+```
+
+- メンバは `x` / `y` / `theta` / `v` / `w`、すべて `double`。単位は m / rad / m/s / rad/s で
+  §3 の SI 統一と一致するため**変換不要**。
+- ストリーム名の `#define` は上記ヘッダにあるので**自分で定義しない**。
+- `Spur_Odometry_Property { radius_r, radius_l, tread }` が存在するが、**使わない**。
+  TC2025 も読み側は `SSMApi< Spur_Odometry > odm_orig( SNAME_ODOMETRY, 0 );` と1引数。
+- 型名（`Spur_Odometry`）とストリーム名（`"spur_odometry"`）は別物。
+  テンプレート引数は型名、`lsssm` に出るのはストリーム名。
+
+### odom_gl.hpp
+
+```cpp
+#define SNAME_ODOM "odom_gl"
+
+struct odom_gl {
+  double pose[ 3 ];   // 地図座標系・車輪中心 ( x[m], y[m], yaw[rad] )
+  double v;           // 並進速度 [m/s]（後退は負）
+  double w;           // 角速度 [rad/s]
+};
+```
+
+- `status` は持たせない。`readNew()` が true のときしか `write()` しないため常に有効。
+- **property 型は定義しない。** `SSMApi< odom_gl >` と1引数で宣言し、
+  `setProperty()` / `getProperty()` を呼ばない。
+  `SSMDummy` は空クラスで `sizeof` が 1 になるため `if( mPropertySize > 0 )` のガードを
+  すり抜け、1バイトのゴミが書き込まれて true が返る。
+- `pose` の行末コメントには「地図座標系」「車輪中心」「添字と単位」の3つを必ず書く。
+  基準を間違えるとエラーが出ず、ndt / localizer 側で静かにずれる。
+
+### 座標変換
+
+| 座標系 | 原点と向き | 現れる場所 |
+|---|---|---|
+| YP-Spur 座標系 | ypspur-coordinator 起動時のロボット位置・向き | `spur_odometry` |
+| 地図座標系 | PCD の原点。+X が右、+Y が上 | `odom_gl`, `config.course.start_pose` |
+
+両者の関係は odometry 起動時にロボットがどこに置かれていたかで毎回変わる。
+**起動時に一度確定させ、以降は固定の剛体変換を適用する。**
+
+起動時のロボットは物理的に1つの姿勢を持ち、それを2つの座標系で測った値が
+`gInit`（= 起動時の `spur_odometry`）と `gStart`（= `config.course.start_pose`）である。
+同じ姿勢の2表現なので、両座標系の回転差は `th = gStart[_YAW] - gInit.theta`。
+
+```cpp
+// initTransform() : 起動時に一度だけ
+double th = trans_q( gStart[ _YAW ] - gInit.theta );
+gCos = cos( th );
+gSin = sin( th );
+
+// transformToMap() : 毎周期
+double dx = src->x - gInit.x;   // YP-Spur 座標系での移動量
+double dy = src->y - gInit.y;
+dst->pose[ _X ]   = gStart[ _X ] + gCos * dx - gSin * dy;
+dst->pose[ _Y ]   = gStart[ _Y ] + gSin * dx + gCos * dy;
+dst->pose[ _YAW ] = trans_q( gStart[ _YAW ] + ( src->theta - gInit.theta ) );
+dst->v = src->v;
+dst->w = src->w;
+```
+
+**回転行列は起動時に1回だけ計算する。毎周期 `cos` / `sin` を呼ばない。**
+
+**値は蓄積しない。** `transformToMap()` は前回の出力を一切使わず、毎周期
+`gInit` との差から絶対姿勢を計算し直す（ステートレス）。この性質はデバッグで効く —
+変換式のバグは**全周期で同じだけずれる**形で出るので、走るほどずれが増える症状を見たら
+変換ではなく車輪径・トレッドの設定を疑う。
+
+`v` / `w` はコピーするだけ。座標系を回しても値が変わらないスカラーであるため。
+
+#### 回転を省略してはいけない理由
+`dx` / `dy` は YP-Spur 座標系での移動量であり、地図座標系での移動量ではない。
+回さずに足すと軌跡が `th` だけ回転した形で出る。`th = 0` に退化するのは
+「スタートの向きが地図の +X と一致」かつ「`spur_odometry` の yaw が 0 の状態で起動」の
+両方が成立する場合のみで、どちらが崩れてもエラーは出ず静かにずれる。
+回転を入れておけば `th = 0` のとき自動的に `gCos = 1, gSin = 0` に退化するため害はない。
+
+#### yaw の扱い
+角度なので回転行列ではなく引き算・足し算で対応する。ただし `trans_q()` で必ず正規化する
+（周回コースで累積すると発散する）。正規化関数を新たに書かないこと。
+
+### 初期位置
+`config.course.start_pose` から取得する。これは「スタート地点にロボットを置いたとき、
+地図座標系でどこをどの向きで向いているか」を表す**観測値**であり、任意に決められる値ではない。
+
+**将来の移行予定:** navigate 実装時に WP ファイルの先頭 WP から取る形へ変更する。
+地図原点を動かさずにスタート位置を変えられるようにするため。この決定により、
+地図原点とスタート地点を一致させる必要はなく、継承した PCD の座標系をそのまま使える。
+
+### 処理フロー
+
+```
+setOption( )                          -h | --help のみ
+SSMApi 3つを main のローカルで宣言 → CONF / SPUR / ODM に addr を代入
+try {
+  setupSSM( )                         initSSM → conf.open+getProperty → spur.open → odm.create
+  setSigInt( )
+  while( !gShutOff && !spur.readLast( ) ) usleepSSM( 100 * 1000 );   初回の基準取得
+  initTransform( &conf.property.course, &spur.data )
+  while( !gShutOff ){
+    if( spur.readNew( ) ){ transformToMap( ... ); odm.write( spur.time ); }
+    else                 { usleepSSM( dT * 1000 ); }
+  }
+}
+catch( const std::runtime_error & ) / catch( ... )
+Terminate( )                          release ×3 → endSSM     ※ try/catch の外
+```
+
+### 個別の決定
+
+| 項目 | 決定 | 備考 |
+|---|---|---|
+| ターゲット名 | `odometry`（実行ファイルは `bin/odometry`） | ソースは `src/odom_converter.cpp`。§5 の構成図も `odometry` に修正済み |
+| 初回の基準取得 | `readLast()` の待ちループ | TC2025 `ndt/src/NDTransform.cpp:54` に前例。`gShutOff` 条件を追加した点のみ変更（§2 表 #11） |
+| 待ち間隔 | `usleepSSM( 100 * 1000 )` | 起動時1回だけなので `dT` とは分ける。NDTransform と同じ |
+| メインループ | `readNew()` ポーリング、false のときだけ `usleepSSM( dT * 1000 )` | `setBlocking()` は使わない（§10） |
+| `dT` | `static unsigned int dT = 5; // [ms]` | `spur_odometry` が 200Hz = 5ms 周期。TC2025 の calcOdometry と同じ。§3 の SI 統一に対する意図的な例外（`// [ms]` のコメントは必須） |
+| `write` の時刻 | `odm.write( spur.time )` | `spur_odometry` の時刻を引き継ぐ。localizer が `readTime()` で時刻合わせするため |
+| `SSMApi` の受け渡し | ファイルスコープのポインタ `CONF` / `SPUR` / `ODM` | TC2025 と同じ形。実体は main のローカル。main 内のループは短い実体名をそのまま使い、ポインタは `setupSSM()` / `Terminate()` 専用 |
+| `setupSSM()` の進捗表示 | 1ステップ1行出す | SSM 系は失敗箇所が分かりにくい。TC2025 と同じ |
+| `openWait()` | 使わない | `open()` が失敗したら即エラー終了。起動順は bringup.sh で担保 |
+| `ctrlC()` | `signal( SIGINT, SIG_DFL )` | TC2025 の `NULL` は使わない（config.cpp と同じ） |
+| `gShutOff` の型 | `static int` | config.cpp と揃える（§10 で `volatile sig_atomic_t` は却下済み） |
+| `initTransform()` での表示 | `start_pose` / `spur init` / `rotation` を rad と deg の両方で出す | `th` は符号を間違えてもエラーが出ず軌跡が静かに回転するだけ。config の `printParam()` と同じ「目視で検出する」思想。TC2025 には無い出力 |
+| リンク | `utility ssm m`（`ypspur` なし、`pthread` なし） | §10 参照 |
+
+### 注意点
+
+- **`CONF = &conf;` の3行を書き忘れると `setupSSM()` でヌルポインタ参照 → 即 segfault。**
+  初期化順が目に見えないのがこの形の弱点。ただし起動直後に落ちるので発見は容易。
+- **`transformToMap()` は `initTransform()` が先に呼ばれている前提。** 順序を逆にすると
+  `gCos = gSin = 0` のまま走り、**`odom_gl` が常に `start_pose` を返す**（動かしても値が
+  変わらない）という症状になる。エラーは出ない。
+- 待ちループ中に Ctrl-C した場合、`initTransform()` がゴミ値で1回走って表示を出すが、
+  直後のメインループに入らず終了するので実害はない。
+- `Terminate()` は try/catch の外なので `setupSSM()` が途中で throw しても必ず通る。
+  `release()` は sid が 0 なら何もしないため open/create 前に呼んでも安全。
+
+### 動作確認の観点（未実施）
+
+- `lsssm` で `odom_gl` が見えるか
+- 起動直後の `odom_gl.pose` が `start_pose` と一致するか
+- 手押しで 1m 前進 → `start_pose` から想定方向に 1m 動くか
+- その場で 90 度回転 → `yaw` が 0.5π 変化するか
+- 符号ミス、rad / deg の取り違えがないか
+- **動かしても `pose` が `start_pose` のまま**なら `initTransform()` の呼び忘れ（上記）
+- **走るほどずれが増える**なら変換ではなく車輪径・トレッドの設定
+
+### 未決事項
+
+- 動作確認用ビューアを作るか（TC2025 の `odm-viewer` は gnuplot 依存）
+- `course.start_pose` の実測値（§8 の実測値表を参照。**未確定**）
