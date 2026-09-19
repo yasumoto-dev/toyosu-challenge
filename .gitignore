@@ -20,9 +20,9 @@ compile_commands.json
 core
 core.*
 
-# ---- 記録データ（走行ログ・rosbag）----
-log/
-*.bag
+# ---- 記録データ（走行ログ）----
+logs/
+*.log
 *.db3
 
 # ---- エディタ・OS ----
