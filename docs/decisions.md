@@ -90,9 +90,9 @@ TC2025 と異なる実装を提案する場合は、必ずその旨を明記し�
 
 | ヘッダ | 誰が include するか | 置き場所 |
 |---|---|---|
-| `utility.hpp` | 全プロセス | `utility/include/` |
-| `config.hpp` | 全プロセス（型定義を受け取る） | `config/include/` |
-| `param.hpp` | `config.cpp` だけ | `config/src/` |
+| `utility.hpp` | 全プロセス | `src/utility/include/` |
+| `config.hpp` | 全プロセス（型定義を受け取る） | `src/config/include/` |
+| `param.hpp` | `config.cpp` だけ | `src/config/src/` |
 
 `param.hpp` を `include/` に置くと「他プロセスから使ってよいヘッダ」と誤解させる。
 実際には yaml-cpp のパーサを隠蔽するためにあえて外へ出していないヘッダなので、
@@ -210,8 +210,8 @@ ypspur-coordinator が別途起動しており、spur_odometry を約200Hz で�
 utility にも PCL のコンパイル定義が付く。TC2025 のルートがこの状態だった。
 
 現状の配置:
-- `find_package( yaml-cpp REQUIRED )` → `config/CMakeLists.txt`
-- `find_package( PCL 1.11 REQUIRED )` → `ndt/CMakeLists.txt`（ndt 実装時に追加）
+- `find_package( yaml-cpp REQUIRED )` → `src/config/CMakeLists.txt`
+- `find_package( PCL 1.11 REQUIRED )` → `src/ndt/CMakeLists.txt`（ndt 実装時に追加）
 
 ルートに書いた方がよくなるケース（将来の判断材料）:
 
@@ -241,20 +241,27 @@ utility にも PCL のコンパイル定義が付く。TC2025 のルートがこ
 
 ```
 toyosu_challenge/
-  CMakeLists.txt
+  CMakeLists.txt            全体設定 + add_subdirectory( src ) のみ
   bin/                      実行ファイル出力先
   docs/decisions.md
-  utility/
-    CMakeLists.txt
-    include/utility.hpp     公開
-    src/utility.cpp
-  config/
-    CMakeLists.txt
-    include/config.hpp      公開
-    src/param.hpp           内部
-    src/param.cpp
-    src/config.cpp
-    param/toyosu.yaml
+  maps/                     点群地図
+  params/toyosu.yaml        パラメータ
+  scripts/                  起動・ログ取得スクリプト
+  src/
+    CMakeLists.txt          モジュールの add_subdirectory を並べるだけ
+    utility/
+      CMakeLists.txt
+      include/utility.hpp   公開
+      src/utility.cpp
+    config/
+      CMakeLists.txt
+      include/config.hpp    公開
+      src/param.hpp         内部
+      src/param.cpp
+      src/config.cpp
+    urg/                    CMakeLists.txt は未作成（ビルド対象外）
+      include/urg.hpp
+      src/urg_handler.cpp
 ```
 
 `add_executable` は SSM のプロセス構成図に名前が載るものだけ（最終的に config /
@@ -263,7 +270,31 @@ urg_handler / odom_conv / ndt / localizer の 5 個）。`utility` は関数の�
 実体が無いため、ライブラリにはできない（INTERFACE ライブラリ案は §8 の未決事項）。
 
 静的ライブラリは `CMAKE_RUNTIME_OUTPUT_DIRECTORY` の対象外なので、
-`bin/` ではなく `build/utility/libutility.a` に出力される。
+`bin/` ではなく `build/src/utility/libutility.a` に出力される（`build/` 以下の階層は
+ソースツリーの階層をそのまま写すため、`src/` を挟んだ分だけ 1 段深くなる）。
+
+### src/ への集約（2026-09-19 決定）
+
+**ビルド対象のモジュールは `src/` 配下にまとめ、ルートにはデータ・文書だけを置く。**
+
+理由: ルート直下にモジュール（`config/` `odometry/` …）とデータ・文書（`maps/` `params/`
+`docs/` `scripts/`）が混在し、どれがビルド対象かひと目で分からなくなっていた。
+
+ルートの `CMakeLists.txt` は `add_subdirectory( src )` の 1 行だけを持ち、個々のモジュールは
+`src/CMakeLists.txt` が列挙する。モジュールを追加するとき触るファイルが `src/CMakeLists.txt`
+だけになり、ルート（C++標準・出力先などプロジェクト全体の設定）は安定する。
+
+移動は `git mv` で行った（`mv` + `git add` だと Git が別ファイルの追加とみなし、
+`git log --follow` で移動前の履歴が追えなくなるため）。
+
+移動によってパスの修正が必要になった箇所は無い。理由:
+- `${CMAKE_SOURCE_DIR}/bin` … `CMAKE_SOURCE_DIR` は常に `project()` のあるルートを指すので不変
+- `${CMAKE_CURRENT_SOURCE_DIR}/include` … 各モジュール自身が基準なので不変
+- odometry の `${CMAKE_CURRENT_SOURCE_DIR}/../config/include` … `config` と `odometry` が
+  一緒に `src/` へ移ったため、両者の相対位置は変わらない
+
+`src/odometry/src/odom_converter.cpp` のように `src` が 2 回出るが、外側は「ビルド対象の
+置き場」、内側は「非公開の実装」であり意味が違うので許容する（§3 の API 境界を参照）。
 
 ### 依存関係
 
@@ -395,7 +426,7 @@ UST-20LX の仕様・既知の設定に基づく確定値。
 ### 実行方法（2026-09-16）
 ```bash
 cd bin
-./config -p ../config/param/toyosu.yaml
+./config -p ../params/toyosu.yaml
 ```
 `-p` は必須。`ssm-coordinator` が起動していること。
 
@@ -419,7 +450,7 @@ cd bin
   ndt の点変換（LiDAR → 車輪中心）は純粋な順方向なので、**2つ目の用例が出てから
   API を決める**。後で移せるよう `initTransform()` / `transformToMap()` の2関数に
   まとめてある。
-  なお `utility/include/tf_pose.hpp` と `utility/src/tf_pose.cpp` は空ファイルとして
+  なお `src/utility/include/tf_pose.hpp` と `src/utility/src/tf_pose.cpp` は空ファイルとして
   残っているが、ビルド対象ではなく意味は持たない（`transform.*` からの改名に
   特段の理由は無し）。
 
@@ -486,18 +517,18 @@ cd bin
 
 ```
 [x] CMakeLists.txt 3ファイル（空ファイル + 暫定 main でビルド確認）
-[x] utility/include/utility.hpp  添字定数 (_X/_Y/_YAW) と trans_q() の宣言のみ
-[x] utility/src/utility.cpp     trans_q() の実装
-[x] config/include/config.hpp    型定義
-[x] config/src/param.hpp         公開インタフェース 2関数のみ
-[x] config/src/param.cpp         setDefault() → 各 loader → printParam()
-[x] config/src/config.cpp        main
-[x] config/param/toyosu.yaml     暫定値で記入（実測待ちの項目あり。§8 参照）
+[x] src/utility/include/utility.hpp  添字定数 (_X/_Y/_YAW) と trans_q() の宣言のみ
+[x] src/utility/src/utility.cpp     trans_q() の実装
+[x] src/config/include/config.hpp    型定義
+[x] src/config/src/param.hpp         公開インタフェース 2関数のみ
+[x] src/config/src/param.cpp         setDefault() → 各 loader → printParam()
+[x] src/config/src/config.cpp        main
+[x] params/toyosu.yaml               暫定値で記入（実測待ちの項目あり。§8 参照）
 [x] ./bin/config を実行し、YAML の値が正しく print されることを確認（17キー全部を検証）
 
-[x] odometry/include/odom_gl.hpp       型定義（SNAME_ODOM と odom_gl のみ）
-[x] odometry/src/odom_converter.cpp    main。詳細は §11
-[x] odometry/CMakeLists.txt            ターゲット名は odometry（実行ファイルは bin/odometry）
+[x] src/odometry/include/odom_gl.hpp       型定義（SNAME_ODOM と odom_gl のみ）
+[x] src/odometry/src/odom_converter.cpp    main。詳細は §11
+[x] src/odometry/CMakeLists.txt            ターゲット名は odometry（実行ファイルは bin/odometry）
 [x] ビルド確認（bin/odometry が生成されること）
 [ ] odometry の実機確認（§11 の「動作確認の観点」）
 ```
