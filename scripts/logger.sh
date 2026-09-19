@@ -11,12 +11,18 @@ pids=()
 
 ssm-logger -l config.log -n toyosu_config -i 0 &
 pids+=($!)
-# ssm-logger -l spur_odometry.log -n spur_odometry -i 0 &  pids+=($!)
-# ssm-logger -l odom_gl.log       -n odom_gl       -i 0 &  pids+=($!)
-# ssm-logger -l urg_fs.log        -n urg_fs        -i 0 &  pids+=($!)
-# ssm-logger -l ndt_gl.log        -n ndt_gl        -i 0 &  pids+=($!)
-# ssm-logger -l estim_gl.log      -n localizer     -i 0 &  pids+=($!)
-# ssm-logger -l wp_gl.log         -n wp_gl         -i 0 &  pids+=($!)
+# ssm-logger -l spur_odometry.log -n spur_odometry -i 0 &
+# pids+=($!)
+# ssm-logger -l odom_gl.log       -n odom_gl       -i 0 &
+# pids+=($!)
+# ssm-logger -l urg_fs.log        -n urg_fs        -i 0 &
+# pids+=($!)
+# ssm-logger -l ndt_gl.log        -n ndt_gl        -i 0 &
+# pids+=($!)
+# ssm-logger -l estim_gl.log      -n localizer     -i 0 &
+# pids+=($!)
+# ssm-logger -l wp_gl.log         -n wp_gl         -i 0 &
+# pids+=($!)
 
 # Ctrl-C で全て終了
 trap 'kill "${pids[@]}" 2>/dev/null' INT TERM
