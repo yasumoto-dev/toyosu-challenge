@@ -9,9 +9,9 @@ robot:
 
 # 読み手: ndt, odometry
 course:
-  map_path: ../maps/toyosu_11f_map_all_2D.pcd    # 地図 PCD へのパス ( ファイル名は要確認 )
+  map_path: ../src/maps/toyosu_11f_map_all_2D.pcd    # 地図 PCD へのパス ( ファイル名は要確認 )
   start_pose: [ 0.0, 0.0, 0.0 ]                  # [m, m, rad] Start 地点の地図座標 ( 暫定・未確定 )
-  wp_path: ../maps/toyosu_11f.wp                 # ウェイポイントファイルへのパス ( 仮・第一段階では未使用 )
+  wp_path: ../src/maps/toyosu_11f.wp                 # ウェイポイントファイルへのパス ( 仮・第一段階では未使用 )
 
 # 読み手: urg_handler
 urg:
