@@ -1,4 +1,5 @@
 #!/bin/bash
+# ストリームごとのlogファイルをlogs/<日時>に保存するsh
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
