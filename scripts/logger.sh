@@ -1,9 +1,11 @@
 #!/bin/bash
 
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
 filename="$(date +%Y.%m%d.%H%M)"
 echo ${filename}
-mkdir ${filename}
-cd ${filename}
+mkdir -p "${ROOT}/logs/${filename}"
+cd "${ROOT}/logs/${filename}" || exit 1
 pwd
 
 # 起動中のProcess IDを格納する配列
