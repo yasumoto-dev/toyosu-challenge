@@ -2,3 +2,5 @@
 add_subdirectory(utility)
 add_subdirectory(config)
 add_subdirectory(odometry)
+add_subdirectory(urg)
+
