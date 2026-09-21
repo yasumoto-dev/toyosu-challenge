@@ -14,5 +14,9 @@ $ cd scripts
 $ ./logger.sh
 ```
 
+```c++
+$ cd scripts
+$ ./csv.sh
+```
 
-
+---
