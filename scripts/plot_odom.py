@@ -16,7 +16,10 @@ COL_Y = 2
 
 
 def main():
-    path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_FILE
+    try:
+        path = sys.argv[1]
+    except IndexError:
+        path = DEFAULT_FILE
 
     # '#' 始まりのヘッダ行は comments 指定で読み飛ばされる
     data = np.loadtxt(path, comments="#")
