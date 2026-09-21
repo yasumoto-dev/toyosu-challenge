@@ -17,7 +17,7 @@ course:
 urg:
   device: 192.168.0.10                           # UST-20LX の IP アドレス
   port: 10940                                    # TCP ポート番号
-  range_min: 0.05                               # [m] これより近い点は捨てる
+  range_min: 0.01                                # [m] これより近い点は捨てる
   range_max: 20.0                                # [m] これより遠い点は捨てる
 
 # 読み手: ndt
